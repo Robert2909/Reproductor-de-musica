@@ -1012,6 +1012,40 @@ const CustomPlayer = ({
   }, []);
 
   useEffect(() => {
+    const handleSyncPlaybackState = (e) => {
+      if (e && e.detail) {
+        if (e.detail.volume !== undefined) {
+          const val = Math.max(0, Math.min(100, parseFloat(e.detail.volume) || 0));
+          setVolume(val);
+          localStorage.setItem('musicPlayer_volume', String(val));
+          if (audioRef.current) {
+            audioRef.current.volume = (val / 100) * SAFE_MAX_VOLUME;
+            if (audioRef.current.muted && val > 0) audioRef.current.muted = false;
+          }
+          if (gainNodeRef.current) {
+            gainNodeRef.current.gain.value = (val / 100) * SAFE_MAX_VOLUME;
+          }
+          window.dispatchEvent(new CustomEvent('musicPlayer_volumeFeedback', {
+            detail: { volume: val, isMuted: false }
+          }));
+        }
+        if (e.detail.random !== undefined) {
+          const r = Boolean(e.detail.random);
+          setIsRandom(r);
+          localStorage.setItem('musicPlayer_random', String(r));
+        }
+        if (e.detail.repeat !== undefined) {
+          const rep = parseInt(e.detail.repeat, 10) || 0;
+          setRepeatMode(rep);
+          localStorage.setItem('musicPlayer_repeat', String(rep));
+        }
+      }
+    };
+    window.addEventListener('musicPlayer_syncPlaybackState', handleSyncPlaybackState);
+    return () => window.removeEventListener('musicPlayer_syncPlaybackState', handleSyncPlaybackState);
+  }, []);
+
+  useEffect(() => {
     setProgress(0);
     setCurrentTime(0);
     setFinalSpectrum(null);
@@ -3146,7 +3180,19 @@ function App() {
   const [settingsCategory, setSettingsCategory] = useState('appearance');
 
   // Filtros Rápidos de Biblioteca (Chips de un clic)
-  const [libraryFilter, setLibraryFilter] = useState('all'); // 'all' | 'favorites' | 'recent' | 'discoveries'
+  const [libraryFilter, setLibraryFilter] = useState(() => {
+    try {
+      return localStorage.getItem('musicPlayer_libraryFilter') || 'all';
+    } catch (e) {
+      return 'all';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('musicPlayer_libraryFilter', libraryFilter);
+    } catch (e) {}
+  }, [libraryFilter]);
 
   // Arrastrar y Soltar inteligente directo a la ventana
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -3622,7 +3668,15 @@ function App() {
       'musicPlayer_random',
       'musicPlayer_customAccentColors',
       'musicPlayer_sleepTimerEndAction',
-      'musicPlayer_sleepTimerFadeSeconds'
+      'musicPlayer_sleepTimerFadeSeconds',
+      'musicPlayer_pipEnabled',
+      'musicPlayer_pipSize',
+      'musicPlayer_pipAutoOpen',
+      'musicPlayer_pipShowSpectrum',
+      'musicPlayer_pipShowAlbum',
+      'musicPlayer_pipInteractiveProgress',
+      'musicPlayer_libraryFilter',
+      'musicPlayer_sortConfig'
     ];
     configKeys.forEach(k => localStorage.removeItem(k));
 
@@ -3653,6 +3707,18 @@ function App() {
     setZenClockShowSeconds(false);
     setZenClockShowDate(true);
     setZenClockStyle('minimal');
+    setPipEnabled(true);
+    setPipSize('standard');
+    setPipAutoOpen(true);
+    setPipShowSpectrum(true);
+    setPipShowAlbum(true);
+    setPipInteractiveProgress(true);
+    setLibraryFilter('all');
+    setSortConfig({ key: 'title', direction: 'asc' });
+
+    window.dispatchEvent(new CustomEvent('musicPlayer_syncPlaybackState', {
+      detail: { volume: 25, random: false, repeat: 0 }
+    }));
 
     setShowResetConfigModal(false);
     setResetToastMessage('Se han restablecido todas las preferencias al estado por defecto.');
@@ -4006,7 +4072,20 @@ function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortConfig, setSortConfig] = useState({ key: 'title', direction: 'asc' });
+  const [sortConfig, setSortConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('musicPlayer_sortConfig');
+      return saved ? JSON.parse(saved) : { key: 'title', direction: 'asc' };
+    } catch (e) {
+      return { key: 'title', direction: 'asc' };
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('musicPlayer_sortConfig', JSON.stringify(sortConfig));
+    } catch (e) {}
+  }, [sortConfig]);
 
   // Vinculación rápida de archivos desde DirectoryHandle sin re-parsear metadatos
   const linkFilesFromDirectoryHandle = async (handle) => {
@@ -5387,30 +5466,136 @@ function App() {
   }, []);
 
   // ==========================================
-  // GESTIÓN GLOBAL DE RESPALDOS Y EXPORTACIÓN
+  // GESTIÓN GLOBAL DE RESPALDOS Y CONFIGURACIÓN
   // ==========================================
   const exportGlobalBackup = () => {
     try {
+      const currentVolume = parseFloat(localStorage.getItem('musicPlayer_volume') || '25');
+      const currentRandom = localStorage.getItem('musicPlayer_random') === 'true';
+      const currentRepeat = parseInt(localStorage.getItem('musicPlayer_repeat') || '0', 10);
+
       const backupData = {
         appName: 'Reproductor de música',
-        version: '2.0',
+        type: 'backup',
         exportedAt: new Date().toISOString(),
+
+        // 1. Colecciones y Estadísticas de Usuario
         favorites,
         playCounts,
         customSmartPlaylists,
         customAccentColors,
-        settings: {
-          volume: parseFloat(localStorage.getItem('musicPlayer_volume') || '100'),
+
+        // 2. Reproducción y Motor de Audio
+        playback: {
+          volume: currentVolume,
+          isRandom: currentRandom,
+          repeatMode: currentRepeat,
+          smoothFade,
+          crossfadeDuration: localStorage.getItem('musicPlayer_crossfadeDuration') || '2'
+        },
+
+        // 3. Tema, Colores y Rendimiento
+        appearance: {
           accentColor,
           customAccentColors,
+          largeSpectrumEnabled,
+          largeSpectrumHeight,
+          highPerfGPU,
+          easterEggsEnabled
+        },
+
+        // 4. Modo Zen (Reposo Inmersivo)
+        zenMode: {
+          idleModeEnabled,
+          idleTimeoutSeconds,
+          zenVisualMode,
+          zenBlurIntensity,
+          zenVisualOpacity,
+          zenShowDetails,
+          zenCoverPulse,
+          zenProgressEnabled,
+          zenProgressMode,
+          zenProgressTiming,
+          zenProgressGlow,
+          zenClockEnabled,
+          zenClockPosition,
+          zenClockFormat,
+          zenClockShowSeconds,
+          zenClockShowDate,
+          zenClockStyle
+        },
+
+        // 5. Mini-Reproductor Flotante «Siempre Visible» (PiP)
+        miniPlayer: {
+          pipEnabled,
+          pipSize,
+          pipAutoOpen,
+          pipShowSpectrum,
+          pipShowAlbum,
+          pipInteractiveProgress
+        },
+
+        // 6. Temporizador de Apagado (Sleep Timer)
+        sleepTimer: {
           sleepTimerEndAction,
-          sleepTimerFadeSeconds,
-          repeat: localStorage.getItem('musicPlayer_repeat') || '0',
-          random: localStorage.getItem('musicPlayer_random') === 'true',
+          sleepTimerFadeSeconds
+        },
+
+        // 7. Atajos de Teclado
+        hotkeys,
+
+        // 8. Navegación, Filtros y Biblioteca
+        libraryPreferences: {
+          libraryFilter,
+          sortConfig,
+          smartFilterTab,
+          savedFolderName: localStorage.getItem('musicPlayer_savedFolderName') || null,
+          autoCloneOPFS: localStorage.getItem('musicPlayer_autoCloneOPFS') === 'true'
+        },
+
+        // 9. Bloque unificado de configuraciones (para máxima compatibilidad)
+        settings: {
+          volume: currentVolume,
+          accentColor,
+          customAccentColors,
+          repeat: String(currentRepeat),
+          repeatMode: currentRepeat,
+          random: currentRandom,
+          isRandom: currentRandom,
           smoothFade,
           crossfadeDuration: localStorage.getItem('musicPlayer_crossfadeDuration') || '2',
+          largeSpectrumEnabled,
+          largeSpectrumHeight,
+          highPerfGPU,
           easterEggsEnabled,
-          hotkeys: localStorage.getItem('musicPlayer_hotkeys') ? JSON.parse(localStorage.getItem('musicPlayer_hotkeys')) : null
+          idleModeEnabled,
+          idleTimeoutSeconds,
+          zenVisualMode,
+          zenBlurIntensity,
+          zenVisualOpacity,
+          zenShowDetails,
+          zenCoverPulse,
+          zenProgressEnabled,
+          zenProgressMode,
+          zenProgressTiming,
+          zenProgressGlow,
+          zenClockEnabled,
+          zenClockPosition,
+          zenClockFormat,
+          zenClockShowSeconds,
+          zenClockShowDate,
+          zenClockStyle,
+          pipEnabled,
+          pipSize,
+          pipAutoOpen,
+          pipShowSpectrum,
+          pipShowAlbum,
+          pipInteractiveProgress,
+          sleepTimerEndAction,
+          sleepTimerFadeSeconds,
+          hotkeys,
+          libraryFilter,
+          sortConfig
         }
       };
 
@@ -5418,8 +5603,10 @@ function App() {
       const blob = new Blob([jsonStr], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      const dateStr = new Date().toISOString().slice(0, 10);
       a.href = url;
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
       a.download = `respaldo_reproductor_${dateStr}.json`;
       document.body.appendChild(a);
       a.click();
@@ -5427,7 +5614,9 @@ function App() {
       URL.revokeObjectURL(url);
 
       window.dispatchEvent(new CustomEvent('musicPlayer_appToast', {
-        detail: { message: `Copia de seguridad exportada con éxito (${favorites.length} favoritas)` }
+        detail: {
+          message: 'Copia de seguridad guardada con éxito.'
+        }
       }));
     } catch (err) {
       console.error('Error exportando respaldo:', err);
@@ -5462,82 +5651,334 @@ function App() {
   const applyGlobalBackup = () => {
     if (!pendingImportData) return;
     try {
-      const {
-        favorites: importedFavs,
-        playCounts: importedCounts,
-        customSmartPlaylists: importedSmart,
-        customAccentColors: rootCustomColors,
-        settings: importedSettings
-      } = pendingImportData;
+      const data = pendingImportData;
+      const s = data.settings || {};
+      const p = data.playback || {};
+      const a = data.appearance || {};
+      const z = data.zenMode || {};
+      const m = data.miniPlayer || {};
+      const t = data.sleepTimer || {};
+      const l = data.libraryPreferences || {};
 
+      // 1. Favoritas
+      const importedFavs = data.favorites ?? s.favorites;
       if (Array.isArray(importedFavs)) {
         setFavorites(importedFavs);
         try { localStorage.setItem('musicPlayer_favorites', JSON.stringify(importedFavs)); } catch (e) {}
         saveFavoritesToDB(importedFavs);
       }
 
+      // 2. PlayCounts (Contadores de reproducciones)
+      const importedCounts = data.playCounts ?? s.playCounts;
       if (importedCounts && typeof importedCounts === 'object') {
         setPlayCounts(importedCounts);
         try { localStorage.setItem('musicPlayer_playCounts', JSON.stringify(importedCounts)); } catch (e) {}
         savePlayCountsToDB(importedCounts);
       }
 
+      // 3. Listas Inteligentes
+      const importedSmart = data.customSmartPlaylists ?? s.customSmartPlaylists;
       if (Array.isArray(importedSmart)) {
         setCustomSmartPlaylists(importedSmart);
         try { localStorage.setItem('musicPlayer_smartPlaylists', JSON.stringify(importedSmart)); } catch (e) {}
       }
 
-      const importedCustomColors = rootCustomColors || (importedSettings && importedSettings.customAccentColors);
+      // 4. Colores Personalizados
+      const importedCustomColors = data.customAccentColors ?? a.customAccentColors ?? s.customAccentColors;
       if (Array.isArray(importedCustomColors)) {
         setCustomAccentColors(importedCustomColors);
         try { localStorage.setItem('musicPlayer_customAccentColors', JSON.stringify(importedCustomColors)); } catch (e) {}
       }
 
-      if (importedSettings && typeof importedSettings === 'object') {
-        if (importedSettings.volume !== undefined) {
+      // 5. Volumen y Estado de Audio
+      let restoredVol = null;
+      const volVal = p.volume ?? s.volume;
+      if (volVal !== undefined) {
+        const parsedVol = parseFloat(volVal);
+        if (!isNaN(parsedVol)) {
+          const clampedVol = Math.max(0, Math.min(100, parsedVol));
+          restoredVol = clampedVol;
           try {
-            const volVal = String(importedSettings.volume);
-            localStorage.setItem('musicPlayer_volume', volVal);
-            window.dispatchEvent(new CustomEvent('musicPlayer_volumeFeedback', {
-              detail: { volume: parseFloat(volVal), isMuted: false }
-            }));
+            localStorage.setItem('musicPlayer_volume', String(clampedVol));
           } catch (e) {}
         }
-        if (importedSettings.accentColor) {
-          setAccentColor(importedSettings.accentColor);
-          try { localStorage.setItem('musicPlayer_accentColor', importedSettings.accentColor); } catch (e) {}
-          document.documentElement.style.setProperty('--accent-color', importedSettings.accentColor);
+      }
+
+      // 6. Modo Aleatorio (Shuffle / Random)
+      let restoredRandom = null;
+      const randomVal = p.isRandom ?? p.random ?? s.random ?? s.isRandom;
+      if (randomVal !== undefined) {
+        restoredRandom = Boolean(randomVal);
+        try { localStorage.setItem('musicPlayer_random', String(restoredRandom)); } catch (e) {}
+      }
+
+      // 7. Modo de Repetición (Repeat)
+      let restoredRepeat = null;
+      const repeatVal = p.repeatMode ?? p.repeat ?? s.repeat ?? s.repeatMode;
+      if (repeatVal !== undefined) {
+        const parsedRep = parseInt(repeatVal, 10);
+        if (!isNaN(parsedRep)) {
+          restoredRepeat = parsedRep;
+          try { localStorage.setItem('musicPlayer_repeat', String(parsedRep)); } catch (e) {}
         }
-        if (importedSettings.sleepTimerEndAction) {
-          setSleepTimerEndAction(importedSettings.sleepTimerEndAction);
-          try { localStorage.setItem('musicPlayer_sleepTimerEndAction', importedSettings.sleepTimerEndAction); } catch (e) {}
+      }
+
+      // Sincronizar en caliente CustomPlayer (volumen, aleatorio, repetición) sin reiniciar
+      if (restoredVol !== null || restoredRandom !== null || restoredRepeat !== null) {
+        window.dispatchEvent(new CustomEvent('musicPlayer_syncPlaybackState', {
+          detail: {
+            volume: restoredVol !== null ? restoredVol : undefined,
+            random: restoredRandom !== null ? restoredRandom : undefined,
+            repeat: restoredRepeat !== null ? restoredRepeat : undefined
+          }
+        }));
+      }
+
+      // 8. Suavizado de Reproducción (Smooth Fade)
+      const smoothVal = p.smoothFade ?? s.smoothFade;
+      if (smoothVal !== undefined) {
+        const isSmooth = Boolean(smoothVal);
+        setSmoothFade(isSmooth);
+        try { localStorage.setItem('musicPlayer_smoothFade', String(isSmooth)); } catch (e) {}
+      }
+
+      // 9. Duración de Crossfade
+      const crossVal = p.crossfadeDuration ?? s.crossfadeDuration;
+      if (crossVal !== undefined) {
+        try { localStorage.setItem('musicPlayer_crossfadeDuration', String(crossVal)); } catch (e) {}
+      }
+
+      // 10. Color de Acento (Tema)
+      const accentVal = a.accentColor ?? s.accentColor;
+      if (accentVal) {
+        setAccentColor(accentVal);
+        try { localStorage.setItem('musicPlayer_accentColor', accentVal); } catch (e) {}
+        document.documentElement.style.setProperty('--accent-color', accentVal);
+      }
+
+      // 11. Espectrómetro Principal
+      const largeSpecVal = a.largeSpectrumEnabled ?? s.largeSpectrumEnabled;
+      if (largeSpecVal !== undefined) {
+        const isLargeSpec = Boolean(largeSpecVal);
+        setLargeSpectrumEnabled(isLargeSpec);
+        try { localStorage.setItem('musicPlayer_largeSpectrum', String(isLargeSpec)); } catch (e) {}
+      }
+      const largeSpecH = a.largeSpectrumHeight ?? s.largeSpectrumHeight;
+      if (largeSpecH) {
+        setLargeSpectrumHeight(largeSpecH);
+        try { localStorage.setItem('musicPlayer_largeSpectrumHeight', largeSpecH); } catch (e) {}
+      }
+
+      // 12. Rendimiento GPU y Easter Eggs
+      const gpuVal = a.highPerfGPU ?? s.highPerfGPU;
+      if (gpuVal !== undefined) {
+        const isGpu = Boolean(gpuVal);
+        setHighPerfGPU(isGpu);
+        try { localStorage.setItem('musicPlayer_highPerfGPU', String(isGpu)); } catch (e) {}
+        if (isGpu) requestHighPerformanceGPU();
+      }
+      const eggsVal = a.easterEggsEnabled ?? s.easterEggsEnabled;
+      if (eggsVal !== undefined) {
+        const isEggs = Boolean(eggsVal);
+        setEasterEggsEnabled(isEggs);
+        try { localStorage.setItem('musicPlayer_easterEggs', String(isEggs)); } catch (e) {}
+      }
+
+      // 13. Modo Zen - Básico & Estética
+      const idleModeVal = z.idleModeEnabled ?? s.idleModeEnabled;
+      if (idleModeVal !== undefined) {
+        const isIdleMode = Boolean(idleModeVal);
+        setIdleModeEnabled(isIdleMode);
+        try { localStorage.setItem('musicPlayer_idleMode', String(isIdleMode)); } catch (e) {}
+      }
+      const idleTimeoutVal = z.idleTimeoutSeconds ?? s.idleTimeoutSeconds;
+      if (idleTimeoutVal !== undefined) {
+        const parsedTimeout = parseInt(idleTimeoutVal, 10);
+        if (!isNaN(parsedTimeout)) {
+          setIdleTimeoutSeconds(parsedTimeout);
+          try { localStorage.setItem('musicPlayer_idleTimeout', String(parsedTimeout)); } catch (e) {}
         }
-        if (importedSettings.sleepTimerFadeSeconds !== undefined) {
-          const fadeSecs = parseInt(importedSettings.sleepTimerFadeSeconds, 10) || 0;
+      }
+      const zenModeVal = z.zenVisualMode ?? s.zenVisualMode;
+      if (zenModeVal) {
+        setZenVisualMode(zenModeVal);
+        try { localStorage.setItem('musicPlayer_zenVisualMode', zenModeVal); } catch (e) {}
+      }
+      const zenBlurVal = z.zenBlurIntensity ?? s.zenBlurIntensity;
+      if (zenBlurVal) {
+        setZenBlurIntensity(zenBlurVal);
+        try { localStorage.setItem('musicPlayer_zenBlur', zenBlurVal); } catch (e) {}
+      }
+      const zenOpacityVal = z.zenVisualOpacity ?? s.zenVisualOpacity;
+      if (zenOpacityVal !== undefined) {
+        const parsedOpacity = parseFloat(zenOpacityVal);
+        if (!isNaN(parsedOpacity)) {
+          setZenVisualOpacity(parsedOpacity);
+          try { localStorage.setItem('musicPlayer_zenOpacity', String(parsedOpacity)); } catch (e) {}
+        }
+      }
+      const zenDetailsVal = z.zenShowDetails ?? s.zenShowDetails;
+      if (zenDetailsVal !== undefined) {
+        const isDetails = Boolean(zenDetailsVal);
+        setZenShowDetails(isDetails);
+        try { localStorage.setItem('musicPlayer_zenShowDetails', String(isDetails)); } catch (e) {}
+      }
+      const zenPulseVal = z.zenCoverPulse ?? s.zenCoverPulse;
+      if (zenPulseVal !== undefined) {
+        const isPulse = Boolean(zenPulseVal);
+        setZenCoverPulse(isPulse);
+        try { localStorage.setItem('musicPlayer_zenCoverPulse', String(isPulse)); } catch (e) {}
+      }
+
+      // 14. Modo Zen - Avance y Reproducción
+      const zenProgVal = z.zenProgressEnabled ?? s.zenProgressEnabled;
+      if (zenProgVal !== undefined) {
+        const isProg = Boolean(zenProgVal);
+        setZenProgressEnabled(isProg);
+        try { localStorage.setItem('musicPlayer_zenProgressEnabled', String(isProg)); } catch (e) {}
+      }
+      const zenProgModeVal = z.zenProgressMode ?? s.zenProgressMode;
+      if (zenProgModeVal) {
+        setZenProgressMode(zenProgModeVal);
+        try { localStorage.setItem('musicPlayer_zenProgressMode', zenProgModeVal); } catch (e) {}
+      }
+      const zenProgTimingVal = z.zenProgressTiming ?? s.zenProgressTiming;
+      if (zenProgTimingVal) {
+        setZenProgressTiming(zenProgTimingVal);
+        try { localStorage.setItem('musicPlayer_zenProgressTiming', zenProgTimingVal); } catch (e) {}
+      }
+      const zenProgGlowVal = z.zenProgressGlow ?? s.zenProgressGlow;
+      if (zenProgGlowVal !== undefined) {
+        const isGlow = Boolean(zenProgGlowVal);
+        setZenProgressGlow(isGlow);
+        try { localStorage.setItem('musicPlayer_zenProgressGlow', String(isGlow)); } catch (e) {}
+      }
+
+      // 15. Modo Zen - Reloj
+      const zenClockVal = z.zenClockEnabled ?? s.zenClockEnabled;
+      if (zenClockVal !== undefined) {
+        const isClock = Boolean(zenClockVal);
+        setZenClockEnabled(isClock);
+        try { localStorage.setItem('musicPlayer_zenClockEnabled', String(isClock)); } catch (e) {}
+      }
+      const zenClockPosVal = z.zenClockPosition ?? s.zenClockPosition;
+      if (zenClockPosVal) {
+        setZenClockPosition(zenClockPosVal);
+        try { localStorage.setItem('musicPlayer_zenClockPosition', zenClockPosVal); } catch (e) {}
+      }
+      const zenClockFormatVal = z.zenClockFormat ?? s.zenClockFormat;
+      if (zenClockFormatVal) {
+        setZenClockFormat(zenClockFormatVal);
+        try { localStorage.setItem('musicPlayer_zenClockFormat', zenClockFormatVal); } catch (e) {}
+      }
+      const zenClockSecVal = z.zenClockShowSeconds ?? s.zenClockShowSeconds;
+      if (zenClockSecVal !== undefined) {
+        const isSec = Boolean(zenClockSecVal);
+        setZenClockShowSeconds(isSec);
+        try { localStorage.setItem('musicPlayer_zenClockShowSeconds', String(isSec)); } catch (e) {}
+      }
+      const zenClockDateVal = z.zenClockShowDate ?? s.zenClockShowDate;
+      if (zenClockDateVal !== undefined) {
+        const isDate = Boolean(zenClockDateVal);
+        setZenClockShowDate(isDate);
+        try { localStorage.setItem('musicPlayer_zenClockShowDate', String(isDate)); } catch (e) {}
+      }
+      const zenClockStyleVal = z.zenClockStyle ?? s.zenClockStyle;
+      if (zenClockStyleVal) {
+        setZenClockStyle(zenClockStyleVal);
+        try { localStorage.setItem('musicPlayer_zenClockStyle', zenClockStyleVal); } catch (e) {}
+      }
+
+      // 16. Mini-Reproductor PiP
+      const pipEnabledVal = m.pipEnabled ?? s.pipEnabled;
+      if (pipEnabledVal !== undefined) {
+        const isPip = Boolean(pipEnabledVal);
+        setPipEnabled(isPip);
+        try { localStorage.setItem('musicPlayer_pipEnabled', JSON.stringify(isPip)); } catch (e) {}
+      }
+      const pipSizeVal = m.pipSize ?? s.pipSize;
+      if (pipSizeVal) {
+        setPipSize(pipSizeVal);
+        try { localStorage.setItem('musicPlayer_pipSize', pipSizeVal); } catch (e) {}
+      }
+      const pipAutoVal = m.pipAutoOpen ?? s.pipAutoOpen;
+      if (pipAutoVal !== undefined) {
+        const isPipAuto = Boolean(pipAutoVal);
+        setPipAutoOpen(isPipAuto);
+        try { localStorage.setItem('musicPlayer_pipAutoOpen', JSON.stringify(isPipAuto)); } catch (e) {}
+      }
+      const pipSpecVal = m.pipShowSpectrum ?? s.pipShowSpectrum;
+      if (pipSpecVal !== undefined) {
+        const isPipSpec = Boolean(pipSpecVal);
+        setPipShowSpectrum(isPipSpec);
+        try { localStorage.setItem('musicPlayer_pipShowSpectrum', JSON.stringify(isPipSpec)); } catch (e) {}
+      }
+      const pipAlbVal = m.pipShowAlbum ?? s.pipShowAlbum;
+      if (pipAlbVal !== undefined) {
+        const isPipAlb = Boolean(pipAlbVal);
+        setPipShowAlbum(isPipAlb);
+        try { localStorage.setItem('musicPlayer_pipShowAlbum', JSON.stringify(isPipAlb)); } catch (e) {}
+      }
+      const pipProgVal = m.pipInteractiveProgress ?? s.pipInteractiveProgress;
+      if (pipProgVal !== undefined) {
+        const isPipProg = Boolean(pipProgVal);
+        setPipInteractiveProgress(isPipProg);
+        try { localStorage.setItem('musicPlayer_pipInteractiveProgress', JSON.stringify(isPipProg)); } catch (e) {}
+      }
+
+      // 17. Temporizador de Apagado
+      const sleepEndVal = t.sleepTimerEndAction ?? s.sleepTimerEndAction;
+      if (sleepEndVal) {
+        setSleepTimerEndAction(sleepEndVal);
+        try { localStorage.setItem('musicPlayer_sleepTimerEndAction', sleepEndVal); } catch (e) {}
+      }
+      const sleepFadeVal = t.sleepTimerFadeSeconds ?? s.sleepTimerFadeSeconds;
+      if (sleepFadeVal !== undefined) {
+        const fadeSecs = parseInt(sleepFadeVal, 10);
+        if (!isNaN(fadeSecs)) {
           setSleepTimerFadeSeconds(fadeSecs);
           try { localStorage.setItem('musicPlayer_sleepTimerFadeSeconds', String(fadeSecs)); } catch (e) {}
         }
-        if (importedSettings.smoothFade !== undefined) {
-          setSmoothFade(Boolean(importedSettings.smoothFade));
-          try { localStorage.setItem('musicPlayer_smoothFade', String(importedSettings.smoothFade)); } catch (e) {}
-        }
-        if (importedSettings.easterEggsEnabled !== undefined) {
-          setEasterEggsEnabled(Boolean(importedSettings.easterEggsEnabled));
-          try { localStorage.setItem('musicPlayer_easterEggs', String(importedSettings.easterEggsEnabled)); } catch (e) {}
-        }
-        if (importedSettings.hotkeys) {
-          setHotkeys(importedSettings.hotkeys);
-          try { localStorage.setItem('musicPlayer_hotkeys', JSON.stringify(importedSettings.hotkeys)); } catch (e) {}
-        }
+      }
+
+      // 18. Atajos de Teclado
+      const hotkeysVal = data.hotkeys ?? s.hotkeys;
+      if (hotkeysVal && typeof hotkeysVal === 'object') {
+        setHotkeys(prev => ({ ...prev, ...hotkeysVal }));
+        try { localStorage.setItem('musicPlayer_hotkeys', JSON.stringify(hotkeysVal)); } catch (e) {}
+      }
+
+      // 19. Preferencias de Biblioteca (Filtros y Ordenación)
+      const libFilterVal = l.libraryFilter ?? s.libraryFilter;
+      if (libFilterVal) {
+        setLibraryFilter(libFilterVal);
+        try { localStorage.setItem('musicPlayer_libraryFilter', libFilterVal); } catch (e) {}
+      }
+      const sortConfigVal = l.sortConfig ?? s.sortConfig;
+      if (sortConfigVal && typeof sortConfigVal === 'object') {
+        setSortConfig(sortConfigVal);
+        try { localStorage.setItem('musicPlayer_sortConfig', JSON.stringify(sortConfigVal)); } catch (e) {}
+      }
+      if (l.smartFilterTab) {
+        setSmartFilterTab(l.smartFilterTab);
+      }
+      if (l.autoCloneOPFS !== undefined) {
+        try { localStorage.setItem('musicPlayer_autoCloneOPFS', String(Boolean(l.autoCloneOPFS))); } catch (e) {}
       }
 
       setShowImportModal(false);
       setPendingImportData(null);
       window.dispatchEvent(new CustomEvent('musicPlayer_appToast', {
-        detail: { message: '¡Copia de seguridad restaurada con éxito! Favoritas y datos actualizados.' }
+        detail: {
+          message: 'Copia de seguridad restaurada con éxito.',
+          icon: 'check'
+        }
       }));
     } catch (err) {
       console.error('Error aplicando respaldo:', err);
+      window.dispatchEvent(new CustomEvent('musicPlayer_appToast', {
+        detail: { message: 'Ocurrió un error al procesar el archivo de respaldo.' }
+      }));
     }
   };
 
@@ -9071,6 +9512,8 @@ function App() {
                         <label style={{ position: 'relative', display: 'inline-block', width: '36px', height: '20px' }}>
                           <input
                             type="checkbox"
+                            id="setting-smooth-fade"
+                            name="smoothFade"
                             checked={smoothFade}
                             onChange={(e) => setSmoothFade(e.target.checked)}
                             style={{ opacity: 0, width: 0, height: 0 }}
@@ -9104,6 +9547,8 @@ function App() {
                         <label style={{ position: 'relative', display: 'inline-block', width: '36px', height: '20px', flexShrink: 0 }}>
                           <input
                             type="checkbox"
+                            id="setting-idle-mode"
+                            name="idleModeEnabled"
                             checked={idleModeEnabled}
                             onChange={(e) => setIdleModeEnabled(e.target.checked)}
                             style={{ opacity: 0, width: 0, height: 0 }}
@@ -9136,6 +9581,8 @@ function App() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
                               <input
                                 type="range"
+                                id="setting-idle-timeout-slider"
+                                name="idleTimeoutSlider"
                                 min="5"
                                 max="300"
                                 step="5"
@@ -9147,6 +9594,8 @@ function App() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                                 <input
                                   type="number"
+                                  id="setting-idle-timeout-number"
+                                  name="idleTimeoutNumber"
                                   min="5"
                                   max="600"
                                   value={idleTimeoutSeconds}
@@ -9264,6 +9713,8 @@ function App() {
                               <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                 <input
                                   type="checkbox"
+                                  id="setting-zen-cover-pulse"
+                                  name="zenCoverPulse"
                                   checked={zenCoverPulse}
                                   onChange={(e) => setZenCoverPulse(e.target.checked)}
                                   style={{ opacity: 0, width: 0, height: 0 }}
@@ -9288,6 +9739,8 @@ function App() {
                               <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                 <input
                                   type="checkbox"
+                                  id="setting-zen-show-details"
+                                  name="zenShowDetails"
                                   checked={zenShowDetails}
                                   onChange={(e) => setZenShowDetails(e.target.checked)}
                                   style={{ opacity: 0, width: 0, height: 0 }}
@@ -9315,6 +9768,8 @@ function App() {
                                 <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                   <input
                                     type="checkbox"
+                                    id="setting-zen-progress-enabled"
+                                    name="zenProgressEnabled"
                                     checked={zenProgressEnabled}
                                     onChange={(e) => setZenProgressEnabled(e.target.checked)}
                                     style={{ opacity: 0, width: 0, height: 0 }}
@@ -9385,6 +9840,8 @@ function App() {
                                     <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                       <input
                                         type="checkbox"
+                                        id="setting-zen-progress-glow"
+                                        name="zenProgressGlow"
                                         checked={zenProgressGlow}
                                         onChange={(e) => setZenProgressGlow(e.target.checked)}
                                         style={{ opacity: 0, width: 0, height: 0 }}
@@ -9415,6 +9872,8 @@ function App() {
                                 <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                   <input
                                     type="checkbox"
+                                    id="setting-zen-clock-enabled"
+                                    name="zenClockEnabled"
                                     checked={zenClockEnabled}
                                     onChange={(e) => setZenClockEnabled(e.target.checked)}
                                     style={{ opacity: 0, width: 0, height: 0 }}
@@ -9507,6 +9966,8 @@ function App() {
                                     <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                       <input
                                         type="checkbox"
+                                        id="setting-zen-clock-seconds"
+                                        name="zenClockShowSeconds"
                                         checked={zenClockShowSeconds}
                                         onChange={(e) => setZenClockShowSeconds(e.target.checked)}
                                         style={{ opacity: 0, width: 0, height: 0 }}
@@ -9530,6 +9991,8 @@ function App() {
                                     <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px' }}>
                                       <input
                                         type="checkbox"
+                                        id="setting-zen-clock-date"
+                                        name="zenClockShowDate"
                                         checked={zenClockShowDate}
                                         onChange={(e) => setZenClockShowDate(e.target.checked)}
                                         style={{ opacity: 0, width: 0, height: 0 }}
@@ -9577,6 +10040,8 @@ function App() {
                         <label style={{ position: 'relative', display: 'inline-block', width: '36px', height: '20px', flexShrink: 0 }}>
                           <input
                             type="checkbox"
+                            id="setting-pip-enabled"
+                            name="pipEnabled"
                             checked={pipEnabled}
                             onChange={(e) => {
                               const val = e.target.checked;
@@ -9679,6 +10144,8 @@ function App() {
                               <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px', flexShrink: 0 }}>
                                 <input
                                   type="checkbox"
+                                  id="setting-pip-auto-open"
+                                  name="pipAutoOpen"
                                   checked={pipAutoOpen}
                                   onChange={(e) => {
                                     const val = e.target.checked;
@@ -9712,6 +10179,8 @@ function App() {
                               <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px', flexShrink: 0 }}>
                                 <input
                                   type="checkbox"
+                                  id="setting-pip-show-spectrum"
+                                  name="pipShowSpectrum"
                                   checked={pipShowSpectrum}
                                   onChange={(e) => {
                                     const val = e.target.checked;
@@ -9745,6 +10214,8 @@ function App() {
                               <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px', flexShrink: 0 }}>
                                 <input
                                   type="checkbox"
+                                  id="setting-pip-interactive-progress"
+                                  name="pipInteractiveProgress"
                                   checked={pipInteractiveProgress}
                                   onChange={(e) => {
                                     const val = e.target.checked;
@@ -9778,6 +10249,8 @@ function App() {
                               <label style={{ position: 'relative', display: 'inline-block', width: '32px', height: '18px', flexShrink: 0 }}>
                                 <input
                                   type="checkbox"
+                                  id="setting-pip-show-album"
+                                  name="pipShowAlbum"
                                   checked={pipShowAlbum}
                                   onChange={(e) => {
                                     const val = e.target.checked;
@@ -10372,6 +10845,8 @@ function App() {
                         <label style={{ position: 'relative', display: 'inline-block', width: '36px', height: '20px' }}>
                           <input
                             type="checkbox"
+                            id="setting-easter-eggs"
+                            name="easterEggsEnabled"
                             checked={easterEggsEnabled}
                             onChange={(e) => {
                               const isEnabled = e.target.checked;
@@ -10441,6 +10916,7 @@ function App() {
                           <input
                             type="file"
                             id="backup-json-input"
+                            name="backupJsonFile"
                             accept=".json,application/json"
                             style={{ display: 'none' }}
                             onChange={handleBackupFileSelect}
@@ -11131,83 +11607,190 @@ function App() {
       )}
 
       {/* MODAL PARA CONFIRMACIÓN DE IMPORTACIÓN DE RESPALDO GLOBAL */}
-      {showImportModal && pendingImportData && (
-        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '520px' }}>
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Upload size={18} style={{ color: 'var(--accent-color)' }} />
-                <span style={{ fontWeight: 600 }}>Restaurar Respaldo Global</span>
-              </div>
-              <X size={18} style={{ cursor: 'pointer', color: 'var(--text-secondary)' }} onClick={() => setShowImportModal(false)} />
-            </div>
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <p style={{ fontSize: '13px', color: 'var(--text-primary)', margin: 0, lineHeight: 1.5 }}>
-                Se ha detectado un archivo de respaldo generado el{' '}
-                <strong>
-                  {pendingImportData.exportedAt
-                    ? new Date(pendingImportData.exportedAt).toLocaleString()
-                    : 'Fecha no especificada'}
-                </strong>.
-              </p>
+      {showImportModal && pendingImportData && (() => {
+        const d = pendingImportData;
+        const p = d.playback || {};
+        const a = d.appearance || {};
+        const z = d.zenMode || {};
+        const m = d.miniPlayer || {};
+        const s = d.settings || {};
+        const t = d.sleepTimer || {};
 
-              <div style={{
-                backgroundColor: 'var(--bg-tertiary)',
-                padding: '14px',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                fontSize: '12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Canciones Favoritas:</span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-highlight)' }}>
-                    {Array.isArray(pendingImportData.favorites) ? pendingImportData.favorites.length : 0} registradas
-                  </span>
+        const favCount = Array.isArray(d.favorites) ? d.favorites.length : 0;
+        const playCount = d.playCounts ? Object.keys(d.playCounts).length : 0;
+        const smartCount = Array.isArray(d.customSmartPlaylists) ? d.customSmartPlaylists.length : 0;
+        const customColCount = Array.isArray(d.customAccentColors || a.customAccentColors || s.customAccentColors)
+          ? (d.customAccentColors || a.customAccentColors || s.customAccentColors).length
+          : 0;
+
+        const vol = p.volume ?? s.volume;
+        const isR = p.isRandom ?? p.random ?? s.random ?? s.isRandom;
+        const rep = p.repeatMode ?? p.repeat ?? s.repeat ?? s.repeatMode;
+        const accent = a.accentColor || s.accentColor;
+        const zenTime = z.idleTimeoutSeconds ?? s.idleTimeoutSeconds;
+        const pipSizeOpt = m.pipSize || s.pipSize;
+        const smoothFadeOpt = p.smoothFade ?? s.smoothFade;
+        const crossfadeSec = p.crossfadeDuration || s.crossfadeDuration || '2';
+        const hasCustomHotkeys = Boolean(d.hotkeys || s.hotkeys);
+
+        return (
+          <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+            <div
+              className="modal-content"
+              onClick={e => e.stopPropagation()}
+              style={{ maxWidth: '580px', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
+            >
+              <div className="modal-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                  <Download size={18} style={{ color: 'var(--accent-color)' }} />
+                  <span style={{ fontWeight: 600, fontSize: '15px' }}>Restaurar copia de seguridad</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Historial de Reproducciones:</span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-highlight)' }}>
-                    {pendingImportData.playCounts ? Object.keys(pendingImportData.playCounts).length : 0} pistas contadas
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Listas Inteligentes Personalizadas:</span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-highlight)' }}>
-                    {Array.isArray(pendingImportData.customSmartPlaylists) ? pendingImportData.customSmartPlaylists.length : 0}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Ajustes & Preferencias:</span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-highlight)' }}>
-                    {pendingImportData.settings ? 'Incluidos' : 'No presentes'}
-                  </span>
-                </div>
+                <X size={18} style={{ cursor: 'pointer', color: 'var(--text-secondary)' }} onClick={() => setShowImportModal(false)} />
               </div>
 
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                Esta acción combinará y actualizará tus canciones favoritas, estadísticas de reproducciones y configuraciones visuales.
-              </p>
+              <div
+                className="modal-body"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '14px',
+                  overflowY: 'auto',
+                  padding: '18px 20px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                  <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    Copia creada el{' '}
+                    <strong style={{ color: 'var(--text-primary)' }}>
+                      {d.exportedAt ? new Date(d.exportedAt).toLocaleString() : 'Fecha no especificada'}
+                    </strong>
+                  </p>
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    padding: '3px 10px',
+                    borderRadius: '12px',
+                    background: 'color-mix(in srgb, var(--accent-color) 12%, transparent)',
+                    color: 'var(--accent-color)',
+                    border: '1px solid color-mix(in srgb, var(--accent-color) 25%, transparent)'
+                  }}>
+                    Respaldo completo
+                  </span>
+                </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <button className="btn btn-outline" onClick={() => setShowImportModal(false)}>
-                  Cancelar
-                </button>
-                <button
-                  className="btn"
-                  onClick={applyGlobalBackup}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--accent-color)', color: '#fff' }}
-                >
-                  <Upload size={14} />
-                  <span>Aplicar Respaldo</span>
-                </button>
+                <div style={{
+                  backgroundColor: 'var(--bg-tertiary)',
+                  padding: '16px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '14px'
+                }}>
+                  {/* Bloque 1: Biblioteca y contenido */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--accent-color)', fontWeight: 600, letterSpacing: '0.4px', textTransform: 'uppercase', marginBottom: '8px' }}>
+                      <ListMusic size={13} />
+                      <span>Biblioteca y colecciones</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Favoritas:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{favCount} canciones</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Historial:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{playCount} pistas</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Listas dinámicas:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{smartCount} creadas</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Temas propios:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{customColCount} colores</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Bloque 2: Audio y reproducción */}
+                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--accent-color)', fontWeight: 600, letterSpacing: '0.4px', textTransform: 'uppercase', marginBottom: '8px' }}>
+                      <Volume2 size={13} />
+                      <span>Audio y reproducción</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Volumen:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{vol !== undefined ? `${Math.round(vol)}%` : 'Conservar'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Aleatorio:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{isR !== undefined ? (isR ? 'Activado' : 'Desactivado') : 'Conservar'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Repetición:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{rep !== undefined ? (String(rep) === '2' ? 'Una canción' : String(rep) === '1' ? 'Toda la lista' : 'Desactivada') : 'Conservar'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Transición:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{smoothFadeOpt !== false ? `Suave (${crossfadeSec}s)` : 'Directa'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Bloque 3: Interfaz y personalización */}
+                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--accent-color)', fontWeight: 600, letterSpacing: '0.4px', textTransform: 'uppercase', marginBottom: '8px' }}>
+                      <Sliders size={13} />
+                      <span>Interfaz y configuración</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Color de tema:</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {accent && <span style={{ width: '9px', height: '9px', borderRadius: '50%', backgroundColor: accent }}></span>}
+                          <strong style={{ color: 'var(--text-highlight)' }}>{accent || 'Por defecto'}</strong>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Modo Zen:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{zenTime ? `${zenTime}s de espera` : 'Configurado'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Mini-reproductor:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{pipSizeOpt ? `Ventana ${pipSizeOpt}` : 'Configurado'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-secondary)', padding: '7px 11px', borderRadius: '5px', fontSize: '12px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Atajos de teclado:</span>
+                        <strong style={{ color: 'var(--text-highlight)' }}>{hasCustomHotkeys ? 'Personalizados' : 'Por defecto'}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                  Se aplicarán las preferencias de reproducción, listas dinámicas, interfaz y atajos guardados. Los archivos de música vinculados en esta sesión no se verán alterados.
+                </p>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '4px' }}>
+                  <button className="btn btn-outline" onClick={() => setShowImportModal(false)}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={applyGlobalBackup}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--accent-color)', color: '#fff' }}
+                  >
+                    <Download size={14} />
+                    <span>Restaurar copia</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* OVERLAY INTELIGENTE PARA ARRASTRAR Y SOLTAR (DRAG & DROP BUFFEADO) */}
       {isDraggingOver && (
