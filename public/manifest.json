@@ -1,0 +1,19 @@
+{
+  "name": "Reproductor de música",
+  "short_name": "Reproductor",
+  "description": "Reproductor de música local de alta fidelidad, con visualizadores de espectro en tiempo real y modo zen inmersivo.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0b10",
+  "theme_color": "#0a0b10",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "48x48 72x72 96x96 128x128 256x256 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["music", "audio", "entertainment", "utilities"]
+}
