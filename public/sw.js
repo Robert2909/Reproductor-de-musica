@@ -1,7 +1,7 @@
 // Service Worker para soporte de PWA e instalación en escritorio
 const CACHE_NAME = 'music-player-v1';
 
-self.addEventListener('install', (e) => {
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
@@ -10,6 +10,5 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // Pass through fetch to support local audio blobs and Vite HMR
-  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+  // Manejo nativo de peticiones para permitir streaming de blobs y peticiones a GitHub Pages
 });

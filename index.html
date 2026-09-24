@@ -7,22 +7,22 @@
     <meta name="description" content="Reproductor de música local de alta fidelidad, con visualizadores de espectro en tiempo real, modo zen inmersivo y diseño glassmorphic." />
 
     <!-- Favicon & Iconos de Aplicación -->
-    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
-    <link rel="apple-touch-icon" href="./icon.svg" />
-    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="manifest" href="/manifest.json" />
 
     <!-- Open Graph / Redes Sociales (Facebook, WhatsApp, Discord, LinkedIn) -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Reproductor de música" />
     <meta property="og:description" content="Reproductor de música local de alta fidelidad con visualizadores de espectro en tiempo real, modo zen inmersivo y ecualizador." />
-    <meta property="og:image" content="./icon.svg" />
+    <meta property="og:image" content="/icon.svg" />
     <meta property="og:site_name" content="Reproductor de música" />
 
     <!-- Twitter Cards -->
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Reproductor de música" />
     <meta name="twitter:description" content="Reproductor de música local de alta fidelidad con visualizadores de espectro en tiempo real, modo zen inmersivo y ecualizador." />
-    <meta name="twitter:image" content="./icon.svg" />
+    <meta name="twitter:image" content="/icon.svg" />
 
     <!-- PWA & Dispositivos Móviles -->
     <meta name="theme-color" content="#0a0b10" />
@@ -34,10 +34,6 @@
       // Polyfills básicos de Node.js requeridos por music-metadata-browser
       var global = global || window;
       window.process = { env: {} };
-    </script>
-    <script type="module">
-      import { Buffer } from 'https://esm.sh/buffer';
-      window.Buffer = Buffer;
     </script>
   </head>
   <body>

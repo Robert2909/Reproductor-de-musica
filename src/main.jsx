@@ -1,3 +1,8 @@
+import { Buffer } from 'buffer'
+window.Buffer = Buffer
+window.global = window
+window.process = { env: {} }
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
@@ -10,7 +15,7 @@ createRoot(document.getElementById('root')).render(
 );
 
 // Registro de Service Worker para PWA
-if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     const swUrl = `${import.meta.env.BASE_URL}sw.js`;
     navigator.serviceWorker.register(swUrl).catch(() => {});
